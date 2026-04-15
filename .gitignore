@@ -1,4 +1,11 @@
-/node_modules
-/dist
-/.env
-/CLAUDE.md
+node_modules/
+dist/
+__pycache__/
+*.pyc
+.env
+backend/uploads/models/*
+backend/uploads/textures/*
+backend/uploads/designs/*
+!backend/uploads/models/.gitkeep
+!backend/uploads/textures/.gitkeep
+!backend/uploads/designs/.gitkeep
