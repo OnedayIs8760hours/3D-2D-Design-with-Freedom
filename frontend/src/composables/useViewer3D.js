@@ -20,6 +20,8 @@ export function useViewer3D(containerId, options = {}) {
   let onUVTemplateReady = null;
   let animFrameId = null;
   let container = null;
+  const raycaster = new THREE.Raycaster();
+  const mouseVec = new THREE.Vector2();
 
   const modelUrl = options.modelUrl || '/api/models/2.glb';
   const uvGuideUrl = options.uvGuideUrl || '';
@@ -195,7 +197,49 @@ export function useViewer3D(containerId, options = {}) {
     renderer.value?.dispose();
   });
 
-  return { loading, updateTexture, setUVTemplateListener, start };
+  function uvToCanvas(u, v) {
+    if (useDirectUvSpace || !uvConfig) {
+      return { x: u * textureCanvasSize, y: v * textureCanvasSize };
+    }
+    return {
+      x: uvConfig.offsetX + (u - uvConfig.minU) * uvConfig.pixelScale,
+      y: uvConfig.offsetY + (v - uvConfig.minV) * uvConfig.pixelScale,
+    };
+  }
+
+  function raycastUV(clientX, clientY) {
+    if (!container || !camera.value || !renderer.value || allMeshes.length === 0) return null;
+
+    const rect = renderer.value.domElement.getBoundingClientRect();
+    mouseVec.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    mouseVec.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+
+    raycaster.setFromCamera(mouseVec, camera.value);
+    const intersects = raycaster.intersectObjects(allMeshes, false);
+
+    if (intersects.length === 0 || !intersects[0].uv) return null;
+
+    const hit = intersects[0];
+    const canvasPos = uvToCanvas(hit.uv.x, hit.uv.y);
+
+    return {
+      u: hit.uv.x,
+      v: hit.uv.y,
+      canvasX: canvasPos.x,
+      canvasY: canvasPos.y,
+      point: hit.point,
+    };
+  }
+
+  function setOrbitEnabled(enabled) {
+    if (controls.value) controls.value.enabled = enabled;
+  }
+
+  function getRendererDom() {
+    return renderer.value?.domElement ?? null;
+  }
+
+  return { loading, updateTexture, setUVTemplateListener, start, raycastUV, setOrbitEnabled, getRendererDom };
 }
 
 // ── UV helper functions (unchanged logic) ──────────────────

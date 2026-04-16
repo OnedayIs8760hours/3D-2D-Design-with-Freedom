@@ -171,6 +171,21 @@ export function useEditor2D(canvasId) {
     c.add(new fabric.Rect({ left: 200, top: 200, fill: 'orange', width: 100, height: 100 }));
   }
 
+  function addCircle() {
+    const c = canvas.value;
+    c.add(new fabric.Circle({ left: 250, top: 250, radius: 50, fill: '#3498db' }));
+  }
+
+  function addTriangle() {
+    const c = canvas.value;
+    c.add(new fabric.Triangle({ left: 300, top: 200, width: 100, height: 100, fill: '#2ecc71' }));
+  }
+
+  function addLine() {
+    const c = canvas.value;
+    c.add(new fabric.Line([200, 300, 400, 300], { stroke: '#333', strokeWidth: 3 }));
+  }
+
   function addImage(dataUrl) {
     const c = canvas.value;
     fabric.Image.fromURL(dataUrl, (img) => {
@@ -178,6 +193,43 @@ export function useEditor2D(canvasId) {
       c.add(img);
       c.centerObject(img);
     });
+  }
+
+  function addImageAt(dataUrl, x, y) {
+    const c = canvas.value;
+    fabric.Image.fromURL(dataUrl, (img) => {
+      img.scaleToWidth(200);
+      img.set({
+        left: x - img.getScaledWidth() / 2,
+        top: y - img.getScaledHeight() / 2,
+      });
+      c.add(img);
+      c.setActiveObject(img);
+      c.requestRenderAll();
+    });
+  }
+
+  function getObjectAtPoint(x, y) {
+    const c = canvas.value;
+    if (!c) return null;
+    const point = new fabric.Point(x, y);
+    const objects = c.getObjects().filter((o) => o !== uvBackgroundImage && o.selectable !== false);
+    for (let i = objects.length - 1; i >= 0; i--) {
+      if (objects[i].containsPoint(point)) {
+        c.setActiveObject(objects[i]);
+        c.requestRenderAll();
+        return objects[i];
+      }
+    }
+    return null;
+  }
+
+  function moveObjectBy(obj, dx, dy) {
+    const c = canvas.value;
+    if (!c || !obj) return;
+    obj.set({ left: obj.left + dx, top: obj.top + dy });
+    obj.setCoords();
+    c.requestRenderAll();
   }
 
   function setBackground(color) {
@@ -213,12 +265,18 @@ export function useEditor2D(canvasId) {
     canvas,
     addText,
     addRect,
+    addCircle,
+    addTriangle,
+    addLine,
     addImage,
+    addImageAt,
     setBackground,
     setUVBackground,
     getElement,
     setOnUpdate,
     getCanvasJSON,
     loadCanvasJSON,
+    getObjectAtPoint,
+    moveObjectBy,
   };
 }

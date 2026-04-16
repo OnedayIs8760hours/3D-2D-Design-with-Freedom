@@ -1,24 +1,35 @@
 <template>
-  <div id="viewer-container" class="viewer-container">
-    <div v-if="loading" class="loading-overlay">🚀 加载模型中...</div>
+  <div id="viewer-container" class="viewer-panel">
+    <div v-if="loading" class="loading-overlay">
+      <div class="spinner" />
+      <span>加载模型中...</span>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { defineExpose } from 'vue';
 import { useViewer3D } from '../composables/useViewer3D.js';
 
 const props = defineProps({
   modelUrl: { type: String, default: '/api/models/2.glb' },
   uvGuideUrl: { type: String, default: '' },
   useDirectUvSpace: { type: Boolean, default: true },
+  visible: { type: Boolean, default: true },
 });
 
-const { loading, updateTexture, setUVTemplateListener, start } = useViewer3D('viewer-container', {
+const {
+  loading,
+  updateTexture,
+  setUVTemplateListener,
+  start,
+  raycastUV,
+  setOrbitEnabled,
+  getRendererDom,
+} = useViewer3D('viewer-container', {
   modelUrl: props.modelUrl,
   uvGuideUrl: props.uvGuideUrl,
   useDirectUvSpace: props.useDirectUvSpace,
 });
 
-defineExpose({ updateTexture, setUVTemplateListener, start });
+defineExpose({ updateTexture, setUVTemplateListener, start, raycastUV, setOrbitEnabled, getRendererDom });
 </script>
