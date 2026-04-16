@@ -19,17 +19,48 @@ const props = defineProps({
 
 const {
   loading,
+  decalItems,
+  selectedDecalId,
   updateTexture,
   setUVTemplateListener,
   start,
   raycastUV,
   setOrbitEnabled,
   getRendererDom,
+  setEditorMode,
+  setBaseColor,
+  addDecalAtClient,
+  selectDecalAt,
+  selectDecalById,
+  clearSelectedDecal,
+  moveSelectedDecalTo,
+  removeDecalById,
+  removeSelectedDecal,
+  getDecalState,
 } = useViewer3D('viewer-container', {
   modelUrl: props.modelUrl,
   uvGuideUrl: props.uvGuideUrl,
   useDirectUvSpace: props.useDirectUvSpace,
 });
 
-defineExpose({ updateTexture, setUVTemplateListener, start, raycastUV, setOrbitEnabled, getRendererDom });
+defineExpose({
+  decalItems,
+  selectedDecalId,
+  updateTexture,
+  setUVTemplateListener,
+  start,
+  raycastUV,
+  setOrbitEnabled,
+  getRendererDom,
+  setEditorMode,
+  setBaseColor,
+  addDecalAtClient,
+  selectDecalAt,
+  selectDecalById,
+  clearSelectedDecal,
+  moveSelectedDecalTo,
+  removeDecalById,
+  removeSelectedDecal,
+  getDecalState,
+});
 </script>

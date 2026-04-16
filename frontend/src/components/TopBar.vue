@@ -8,6 +8,22 @@
 
     <!-- Center: context toolbar (shown when object is selected) -->
     <div class="top-center">
+      <div class="mode-switch" role="tablist" aria-label="编辑模式切换">
+        <button
+          class="mode-switch-btn"
+          :class="{ active: editorMode === 'uv2d' }"
+          @click="$emit('update:editorMode', 'uv2d')"
+        >
+          UV / 2D
+        </button>
+        <button
+          class="mode-switch-btn"
+          :class="{ active: editorMode === '3d' }"
+          @click="$emit('update:editorMode', '3d')"
+        >
+          3D 驱动
+        </button>
+      </div>
       <slot name="context-toolbar" />
     </div>
 
@@ -33,7 +49,8 @@
 defineProps({
   productName: { type: String, default: '自定义服装' },
   show3D: { type: Boolean, default: true },
+  editorMode: { type: String, default: 'uv2d' },
 });
 
-defineEmits(['change-product', 'undo', 'redo', 'update:show3D', 'save-design']);
+defineEmits(['change-product', 'undo', 'redo', 'update:show3D', 'update:editorMode', 'save-design']);
 </script>

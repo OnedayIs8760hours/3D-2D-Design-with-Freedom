@@ -4,10 +4,12 @@
     <TopBar
       product-name="自定义服装"
       :show3D="show3D"
+      :editor-mode="editorMode"
       @update:show3D="show3D = $event"
+      @update:editorMode="onSwitchEditorMode"
       @save-design="onSaveDesign"
-      @undo="editor.canvas.value?.undo?.()"
-      @redo="editor.canvas.value?.redo?.()"
+      @undo="editorMode === 'uv2d' ? editor.canvas.value?.undo?.() : null"
+      @redo="editorMode === 'uv2d' ? editor.canvas.value?.redo?.() : null"
     />
 
     <!-- Body: sidebar + drawer + canvas + 3D -->
@@ -18,6 +20,10 @@
       <!-- Tool drawer (slides out) -->
       <ToolPanel
         :active-panel="activePanel"
+        :editor-mode="editorMode"
+        :layer-items="activeLayerItems"
+        :selected-object-id="activeSelectedObjectId"
+        :pending3-d-asset-label="pending3DAssetLabel"
         @close="activePanel = ''"
         @add-text="editor.addText"
         @add-rect="editor.addRect"
@@ -26,18 +32,33 @@
         @add-line="editor.addLine"
         @add-image="editor.addImage"
         @set-background="editor.setBackground"
+        @set-3d-base-color="onSet3DBaseColor"
         @upload-model="onUploadModel"
+        @select-layer="onSelectLayer"
+        @remove-layer="onRemoveLayer"
+        @remove-active-layer="onRemoveActiveLayer"
+        @prepare-3d-text="onPrepare3DText"
+        @prepare-3d-shape="onPrepare3DShape"
+        @prepare-3d-image="onPrepare3DImage"
       />
 
       <div ref="workspaceRef" class="workspace-split" :class="{ resizing: isResizing }">
         <!-- Center: 2D design canvas -->
-        <div class="design-area">
-          <div class="design-canvas-zone">
+        <div class="design-area" :class="{ 'mode-3d': editorMode === '3d' }">
+          <div v-if="editorMode === 'uv2d'" class="design-canvas-zone">
             <div id="canvas-wrapper">
               <canvas id="texture-canvas"></canvas>
             </div>
           </div>
-          <p class="canvas-hint">一体化板片 · 滚轮缩放 · 空格+拖拽平移 · 实际导出 1024×1024</p>
+          <div v-else class="mode-empty-state">
+            <div class="mode-empty-card">
+              <span class="mode-empty-badge">3D 驱动模式</span>
+              <h3>当前不使用 UV / 2D 画布</h3>
+              <p>素材会作为独立 3D 贴花直接放到模型表面，和左侧 2D 方案完全隔离。</p>
+              <p>先在“上传 / 文字 / 图形”里创建贴花，再点击右侧 3D 模型放置。</p>
+            </div>
+          </div>
+          <p class="canvas-hint">{{ editorMode === 'uv2d' ? '一体化板片 · 滚轮缩放 · 空格+拖拽平移 · 实际导出 1024×1024' : '3D 贴花独立编辑 · 与 UV / 2D 状态完全隔离' }}</p>
         </div>
 
         <div
@@ -55,7 +76,7 @@
         <!-- Right: 3D preview -->
         <div
           class="viewer-area"
-          :class="{ hidden: !show3D, 'edit-active': interaction.editMode.value }"
+          :class="{ hidden: !show3D, 'edit-active': isViewerEditActive }"
           :style="viewerAreaStyle"
         >
           <ViewerScene
@@ -67,12 +88,12 @@
           />
           <button
             class="edit-3d-btn"
-            @click="interaction.editMode.value = !interaction.editMode.value"
+            @click="toggleViewerEditMode"
           >
-            {{ interaction.editMode.value ? '✋ 旋转模式' : '✏️ 3D编辑' }}
+            {{ isViewerEditActive ? '✋ 旋转模式' : (editorMode === '3d' ? '✏️ 3D贴花编辑' : '✏️ 3D编辑') }}
           </button>
-          <p v-if="interaction.editMode.value" class="edit-hint">
-            点击拖拽素材 · 拖入图片到模型
+          <p v-if="isViewerEditActive || pending3DAssetLabel" class="edit-hint">
+            {{ editorMode === '3d' ? (pending3DAssetLabel ? `点击模型放置: ${pending3DAssetLabel}` : '点击选中贴花 · 拖拽移动贴花') : '点击拖拽素材 · 拖入图片到模型' }}
           </p>
         </div>
       </div>
@@ -89,6 +110,8 @@ import ViewerScene from './components/ViewerScene.vue';
 import { useEditor2D } from './composables/useEditor2D.js';
 import { useBridge } from './composables/useBridge.js';
 import { use3DInteraction } from './composables/use3DInteraction.js';
+import { use3DDecalInteraction } from './composables/use3DDecalInteraction.js';
+import { createShapeDecalAsset, createTextDecalAsset } from './utils/decalAssetFactory.js';
 import { uploadModel, saveDesign as apiSaveDesign } from './api/index.js';
 
 const viewerRef = ref(null);
@@ -96,12 +119,15 @@ const modelUrl = ref('/api/models/2.glb');
 const uvGuideUrl = ref('/api/textures/2_diffuse_1001.png');
 const activePanel = ref('');
 const show3D = ref(true);
+const editorMode = ref('uv2d');
 const workspaceRef = ref(null);
 const viewerWidthPercent = ref(40);
 const isResizing = ref(false);
+const pending3DAsset = ref(null);
 
 const editor = useEditor2D('texture-canvas');
-const interaction = use3DInteraction();
+const interaction = use3DInteraction(editorMode);
+const decalInteraction = use3DDecalInteraction(editorMode, pending3DAsset);
 const viewerAreaStyle = computed(() => {
   if (!show3D.value) {
     return { width: '0px', flexBasis: '0px' };
@@ -113,6 +139,20 @@ const viewerAreaStyle = computed(() => {
     flexBasis: basis,
   };
 });
+const activeLayerItems = computed(() => (
+  editorMode.value === '3d'
+    ? (viewerRef.value?.decalItems?.value ?? [])
+    : editor.layerItems.value
+));
+const activeSelectedObjectId = computed(() => (
+  editorMode.value === '3d'
+    ? (viewerRef.value?.selectedDecalId?.value ?? '')
+    : editor.selectedObjectId.value
+));
+const pending3DAssetLabel = computed(() => pending3DAsset.value?.label || '');
+const isViewerEditActive = computed(() => (
+  editorMode.value === '3d' ? decalInteraction.editMode.value : interaction.editMode.value
+));
 
 onMounted(async () => {
   await nextTick();
@@ -130,6 +170,8 @@ onMounted(async () => {
 
   useBridge(editor, viewer);
   interaction.init(viewer, editor);
+  decalInteraction.init(viewer);
+  viewer.setEditorMode(editorMode.value);
   viewer.start();
 });
 
@@ -172,6 +214,68 @@ function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
+function onSwitchEditorMode(mode) {
+  editorMode.value = mode;
+  pending3DAsset.value = null;
+  interaction.editMode.value = false;
+  decalInteraction.editMode.value = false;
+  viewerRef.value?.setEditorMode(mode);
+}
+
+function onSelectLayer(id) {
+  if (editorMode.value === '3d') {
+    viewerRef.value?.selectDecalById(id);
+    return;
+  }
+  editor.selectObjectById(id);
+}
+
+function onRemoveLayer(id) {
+  if (editorMode.value === '3d') {
+    viewerRef.value?.removeDecalById(id);
+    return;
+  }
+  editor.removeObjectById(id);
+}
+
+function onRemoveActiveLayer() {
+  if (editorMode.value === '3d') {
+    viewerRef.value?.removeSelectedDecal();
+    return;
+  }
+  editor.removeActiveObject();
+}
+
+function toggleViewerEditMode() {
+  if (editorMode.value === '3d') {
+    decalInteraction.editMode.value = !decalInteraction.editMode.value;
+    return;
+  }
+  interaction.editMode.value = !interaction.editMode.value;
+}
+
+function onSet3DBaseColor(color) {
+  viewerRef.value?.setBaseColor(color);
+}
+
+function onPrepare3DText(text) {
+  pending3DAsset.value = createTextDecalAsset(text, {
+    fill: '#111827',
+    stroke: 'rgba(255,255,255,0.92)',
+  });
+  decalInteraction.editMode.value = true;
+}
+
+function onPrepare3DShape(shape) {
+  pending3DAsset.value = createShapeDecalAsset(shape);
+  decalInteraction.editMode.value = true;
+}
+
+function onPrepare3DImage(asset) {
+  pending3DAsset.value = asset;
+  decalInteraction.editMode.value = true;
+}
+
 async function onUploadModel(file) {
   try {
     const result = await uploadModel(file);
@@ -187,8 +291,10 @@ async function onSaveDesign() {
   try {
     const designData = {
       canvasJSON: editor.getCanvasJSON(),
+      editorMode: editorMode.value,
       modelUrl: modelUrl.value,
       uvGuideUrl: uvGuideUrl.value,
+      decals: viewerRef.value?.getDecalState?.() ?? [],
     };
     const result = await apiSaveDesign(designData);
     alert(`设计已保存！ID: ${result.id}`);

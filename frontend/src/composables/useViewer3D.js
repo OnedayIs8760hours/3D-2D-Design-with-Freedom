@@ -2,9 +2,13 @@ import { onMounted, onBeforeUnmount, ref, shallowRef } from 'vue';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { DecalGeometry } from 'three/examples/jsm/geometries/DecalGeometry.js';
 
 /**
  * Composable wrapping the Three.js 3D viewer.
+ * Supports two isolated workflows:
+ * - uv2d: 2D canvas drives the model texture through UV mapping
+ * - 3d: decals are placed directly on the model as independent 3D assets
  */
 export function useViewer3D(containerId, options = {}) {
   const loading = ref(true);
@@ -12,14 +16,23 @@ export function useViewer3D(containerId, options = {}) {
   const camera = shallowRef(null);
   const renderer = shallowRef(null);
   const controls = shallowRef(null);
+  const decalItems = ref([]);
+  const selectedDecalId = ref('');
 
   let allMeshes = [];
+  let decalMeshes = [];
+  let modelRoot = null;
+  let decalRoot = null;
   let cachedCanvasSource = null;
   let uvConfig = null;
   let cachedUVTemplateUrl = null;
   let onUVTemplateReady = null;
   let animFrameId = null;
   let container = null;
+  let editorMode = 'uv2d';
+  let baseColor = '#ffffff';
+  let decalCounter = 1;
+
   const raycaster = new THREE.Raycaster();
   const mouseVec = new THREE.Vector2();
 
@@ -52,6 +65,7 @@ export function useViewer3D(containerId, options = {}) {
     controls.value = ctrl;
 
     addLights(s);
+    initDecalRoot(s);
     initPlaceholder(s);
     loadModel();
 
@@ -68,6 +82,13 @@ export function useViewer3D(containerId, options = {}) {
     s.add(back);
   }
 
+  function initDecalRoot(s) {
+    decalRoot = new THREE.Group();
+    decalRoot.name = 'DecalRoot';
+    decalRoot.visible = editorMode === '3d';
+    s.add(decalRoot);
+  }
+
   function initPlaceholder(s) {
     const box = new THREE.Mesh(
       new THREE.BoxGeometry(10, 14, 10),
@@ -75,7 +96,7 @@ export function useViewer3D(containerId, options = {}) {
     );
     box.name = 'PlaceholderBox';
     s.add(box);
-    allMeshes.push(box);
+    allMeshes = [box];
   }
 
   function loadModel() {
@@ -86,25 +107,26 @@ export function useViewer3D(containerId, options = {}) {
         const placeholder = s.getObjectByName('PlaceholderBox');
         if (placeholder) {
           s.remove(placeholder);
-          allMeshes = [];
         }
+
+        if (modelRoot) {
+          s.remove(modelRoot);
+          modelRoot = null;
+        }
+
+        disposeAllDecals();
+        allMeshes = [];
 
         const model = gltf.scene;
         model.traverse((child) => {
           if (child.isMesh) {
-            child.material = new THREE.MeshStandardMaterial({
-              color: 0xffffff,
-              roughness: 0.5,
-              metalness: 0.1,
-              side: THREE.DoubleSide,
-            });
+            child.material = createBaseMaterial();
             allMeshes.push(child);
           }
         });
 
         uvConfig = analyzeUVBounds(allMeshes, textureCanvasSize, uvTemplatePaddingRatio);
 
-        // Scale & center
         const box = new THREE.Box3().setFromObject(model);
         const size = box.getSize(new THREE.Vector3());
         const maxDim = Math.max(size.x, size.y, size.z);
@@ -113,15 +135,26 @@ export function useViewer3D(containerId, options = {}) {
         const center = box.getCenter(new THREE.Vector3());
         model.position.sub(center.multiplyScalar(scale));
 
+        modelRoot = model;
         s.add(model);
         loading.value = false;
 
         if (uvConfig) publishUVTemplate();
-        if (cachedCanvasSource) updateTexture(cachedCanvasSource);
+        applyRenderMode();
       },
       undefined,
       (err) => console.error('Model load error:', err),
     );
+  }
+
+  function createBaseMaterial() {
+    return new THREE.MeshStandardMaterial({
+      color: editorMode === '3d' ? baseColor : '#ffffff',
+      roughness: 0.5,
+      metalness: 0.1,
+      side: THREE.DoubleSide,
+      transparent: false,
+    });
   }
 
   function publishUVTemplate() {
@@ -138,7 +171,7 @@ export function useViewer3D(containerId, options = {}) {
 
   function updateTexture(canvasElement) {
     cachedCanvasSource = canvasElement;
-    if (allMeshes.length === 0 || !uvConfig) return;
+    if (editorMode !== 'uv2d' || allMeshes.length === 0 || !uvConfig) return;
 
     allMeshes.forEach((mesh) => {
       if (mesh.name === 'PlaceholderBox') return;
@@ -146,28 +179,74 @@ export function useViewer3D(containerId, options = {}) {
       if (!uv) return;
 
       const mat = mesh.material;
-      if (!mat.map || mat.map.source.data !== canvasElement) {
-        const texture = new THREE.CanvasTexture(canvasElement);
-        texture.outputColorSpace = THREE.SRGBColorSpace;
-        texture.wrapS = THREE.ClampToEdgeWrapping;
-        texture.wrapT = THREE.ClampToEdgeWrapping;
-        texture.center.set(0, 0);
-        texture.rotation = 0;
-
-        if (useDirectUvSpace) {
-          texture.repeat.set(1, 1);
-          texture.offset.set(0, 0);
-        } else {
-          texture.repeat.set(uvConfig.textureScale, uvConfig.textureScale);
-          texture.offset.set(uvConfig.textureOffsetX, uvConfig.textureOffsetY);
-        }
-        texture.flipY = false;
-
-        mat.map = texture;
-        mat.needsUpdate = true;
-      } else {
-        mat.map.needsUpdate = true;
+      if (mat.map) {
+        mat.map.dispose();
       }
+
+      const texture = new THREE.CanvasTexture(canvasElement);
+      texture.outputColorSpace = THREE.SRGBColorSpace;
+      texture.wrapS = THREE.ClampToEdgeWrapping;
+      texture.wrapT = THREE.ClampToEdgeWrapping;
+      texture.center.set(0, 0);
+      texture.rotation = 0;
+      texture.flipY = false;
+
+      if (useDirectUvSpace) {
+        texture.repeat.set(1, 1);
+        texture.offset.set(0, 0);
+      } else {
+        texture.repeat.set(uvConfig.textureScale, uvConfig.textureScale);
+        texture.offset.set(uvConfig.textureOffsetX, uvConfig.textureOffsetY);
+      }
+
+      mat.map = texture;
+      mat.color.set('#ffffff');
+      mat.needsUpdate = true;
+    });
+  }
+
+  function applyRenderMode() {
+    if (!allMeshes.length) return;
+
+    const is3DMode = editorMode === '3d';
+    if (decalRoot) decalRoot.visible = is3DMode;
+
+    allMeshes.forEach((mesh) => {
+      if (mesh.name === 'PlaceholderBox') return;
+      if (is3DMode) {
+        if (mesh.material.map) {
+          mesh.material.map.dispose();
+          mesh.material.map = null;
+        }
+        mesh.material.color.set(baseColor);
+        mesh.material.needsUpdate = true;
+      } else {
+        mesh.material.color.set('#ffffff');
+        mesh.material.needsUpdate = true;
+      }
+    });
+
+    if (!is3DMode && cachedCanvasSource) {
+      updateTexture(cachedCanvasSource);
+    }
+  }
+
+  function setEditorMode(mode) {
+    editorMode = mode === '3d' ? '3d' : 'uv2d';
+    if (editorMode !== '3d') {
+      clearSelectedDecal();
+    }
+    applyRenderMode();
+  }
+
+  function setBaseColor(color) {
+    baseColor = color;
+    if (editorMode !== '3d') return;
+
+    allMeshes.forEach((mesh) => {
+      if (mesh.name === 'PlaceholderBox') return;
+      mesh.material.color.set(color);
+      mesh.material.needsUpdate = true;
     });
   }
 
@@ -182,9 +261,9 @@ export function useViewer3D(containerId, options = {}) {
   }
 
   function onResize() {
-    if (!container) return;
-    const w = container.clientWidth;
-    const h = container.clientHeight;
+    if (!container || !camera.value || !renderer.value) return;
+    const w = container.clientWidth || 1;
+    const h = container.clientHeight || 1;
     camera.value.aspect = w / h;
     camera.value.updateProjectionMatrix();
     renderer.value.setSize(w, h);
@@ -194,6 +273,7 @@ export function useViewer3D(containerId, options = {}) {
   onBeforeUnmount(() => {
     window.removeEventListener('resize', onResize);
     if (animFrameId) cancelAnimationFrame(animFrameId);
+    disposeAllDecals();
     renderer.value?.dispose();
   });
 
@@ -207,28 +287,210 @@ export function useViewer3D(containerId, options = {}) {
     };
   }
 
-  function raycastUV(clientX, clientY) {
-    if (!container || !camera.value || !renderer.value || allMeshes.length === 0) return null;
+  function raycastObjects(clientX, clientY, objects) {
+    if (!container || !camera.value || !renderer.value || !objects.length) return [];
 
     const rect = renderer.value.domElement.getBoundingClientRect();
     mouseVec.x = ((clientX - rect.left) / rect.width) * 2 - 1;
     mouseVec.y = -((clientY - rect.top) / rect.height) * 2 + 1;
 
     raycaster.setFromCamera(mouseVec, camera.value);
-    const intersects = raycaster.intersectObjects(allMeshes, false);
+    return raycaster.intersectObjects(objects, false);
+  }
 
-    if (intersects.length === 0 || !intersects[0].uv) return null;
+  function raycastModel(clientX, clientY) {
+    const intersects = raycastObjects(clientX, clientY, allMeshes);
+    if (intersects.length === 0) return null;
 
     const hit = intersects[0];
-    const canvasPos = uvToCanvas(hit.uv.x, hit.uv.y);
+    const normal = getWorldNormal(hit);
+    const canvasPos = hit.uv ? uvToCanvas(hit.uv.x, hit.uv.y) : { x: 0, y: 0 };
 
     return {
-      u: hit.uv.x,
-      v: hit.uv.y,
+      u: hit.uv?.x ?? null,
+      v: hit.uv?.y ?? null,
       canvasX: canvasPos.x,
       canvasY: canvasPos.y,
-      point: hit.point,
+      point: hit.point.clone(),
+      normal,
+      object: hit.object,
     };
+  }
+
+  function raycastUV(clientX, clientY) {
+    const hit = raycastModel(clientX, clientY);
+    if (!hit || hit.u == null || hit.v == null) return null;
+    return hit;
+  }
+
+  function pickDecal(clientX, clientY) {
+    const intersects = raycastObjects(clientX, clientY, decalMeshes);
+    return intersects.length ? intersects[0].object : null;
+  }
+
+  async function addDecalAtClient(dataUrl, clientX, clientY, options = {}) {
+    const hit = raycastModel(clientX, clientY);
+    if (!hit) return null;
+    return addDecalAtHit(dataUrl, hit, options);
+  }
+
+  async function addDecalAtHit(dataUrl, hit, options = {}) {
+    if (!hit?.object) return null;
+
+    const asset = await loadDecalAsset(dataUrl);
+    const id = options.id || `decal-${decalCounter++}`;
+    const label = options.label || getDefaultDecalLabel(options.type || 'image', id);
+    const scale = options.scale || 4.8;
+    const rotation = options.rotation || 0;
+    const aspect = asset.aspect || 1;
+
+    const decalMesh = buildDecalMesh(hit, {
+      id,
+      label,
+      type: options.type || 'image',
+      dataUrl,
+      texture: asset.texture,
+      scale,
+      rotation,
+      aspect,
+    });
+
+    decalRoot.add(decalMesh);
+    decalMeshes.push(decalMesh);
+    refreshDecalItems();
+    selectDecalById(id);
+    return decalMesh;
+  }
+
+  function buildDecalMesh(hit, asset) {
+    const geometry = createDecalGeometry(hit, asset.scale, asset.aspect, asset.rotation);
+    const material = new THREE.MeshStandardMaterial({
+      map: asset.texture,
+      transparent: true,
+      alphaTest: 0.05,
+      depthTest: true,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -4,
+      side: THREE.DoubleSide,
+      emissive: new THREE.Color(0x2563eb),
+      emissiveIntensity: 0,
+    });
+
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.renderOrder = 10;
+    mesh.userData = {
+      id: asset.id,
+      name: asset.label,
+      type: asset.type,
+      dataUrl: asset.dataUrl,
+      scale: asset.scale,
+      rotation: asset.rotation,
+      aspect: asset.aspect,
+      point: hit.point.clone(),
+      normal: hit.normal.clone(),
+      targetUuid: hit.object.uuid,
+    };
+    return mesh;
+  }
+
+  function createDecalGeometry(hit, scale, aspect, rotation) {
+    const orientation = new THREE.Euler().setFromQuaternion(
+      new THREE.Quaternion().setFromUnitVectors(
+        new THREE.Vector3(0, 0, 1),
+        hit.normal.clone().normalize(),
+      ),
+    );
+    orientation.z += rotation;
+
+    const size = new THREE.Vector3(scale * aspect, scale, scale);
+    const position = hit.point.clone().add(hit.normal.clone().multiplyScalar(0.015));
+    return new DecalGeometry(hit.object, position, orientation, size);
+  }
+
+  function selectDecalAt(clientX, clientY) {
+    const mesh = pickDecal(clientX, clientY);
+    if (!mesh) return null;
+    selectDecalById(mesh.userData.id);
+    return mesh;
+  }
+
+  function selectDecalById(id) {
+    selectedDecalId.value = id || '';
+    syncDecalHighlight();
+  }
+
+  function clearSelectedDecal() {
+    selectedDecalId.value = '';
+    syncDecalHighlight();
+  }
+
+  function moveSelectedDecalTo(clientX, clientY) {
+    const id = selectedDecalId.value;
+    if (!id) return null;
+
+    const mesh = decalMeshes.find((item) => item.userData.id === id);
+    const hit = raycastModel(clientX, clientY);
+    if (!mesh || !hit) return null;
+
+    const nextGeometry = createDecalGeometry(hit, mesh.userData.scale, mesh.userData.aspect, mesh.userData.rotation);
+    mesh.geometry.dispose();
+    mesh.geometry = nextGeometry;
+    mesh.userData.point = hit.point.clone();
+    mesh.userData.normal = hit.normal.clone();
+    mesh.userData.targetUuid = hit.object.uuid;
+    return mesh;
+  }
+
+  function removeDecalById(id) {
+    const index = decalMeshes.findIndex((item) => item.userData.id === id);
+    if (index === -1) return;
+    const [mesh] = decalMeshes.splice(index, 1);
+    disposeDecalMesh(mesh);
+    if (selectedDecalId.value === id) {
+      selectedDecalId.value = '';
+    }
+    refreshDecalItems();
+    syncDecalHighlight();
+  }
+
+  function removeSelectedDecal() {
+    if (!selectedDecalId.value) return false;
+    removeDecalById(selectedDecalId.value);
+    return true;
+  }
+
+  function refreshDecalItems() {
+    decalItems.value = decalMeshes
+      .map((mesh) => ({
+        id: mesh.userData.id,
+        type: mesh.userData.type || 'image',
+        name: mesh.userData.name || '贴花',
+      }))
+      .reverse();
+  }
+
+  function syncDecalHighlight() {
+    decalMeshes.forEach((mesh) => {
+      const active = mesh.userData.id === selectedDecalId.value;
+      mesh.material.emissiveIntensity = active ? 0.22 : 0;
+      mesh.renderOrder = active ? 12 : 10;
+    });
+  }
+
+  function getDecalState() {
+    return decalMeshes.map((mesh) => ({
+      id: mesh.userData.id,
+      type: mesh.userData.type,
+      name: mesh.userData.name,
+      dataUrl: mesh.userData.dataUrl,
+      scale: mesh.userData.scale,
+      rotation: mesh.userData.rotation,
+      aspect: mesh.userData.aspect,
+      point: mesh.userData.point,
+      normal: mesh.userData.normal,
+      targetUuid: mesh.userData.targetUuid,
+    }));
   }
 
   function setOrbitEnabled(enabled) {
@@ -239,10 +501,35 @@ export function useViewer3D(containerId, options = {}) {
     return renderer.value?.domElement ?? null;
   }
 
-  return { loading, updateTexture, setUVTemplateListener, start, raycastUV, setOrbitEnabled, getRendererDom };
-}
+  function disposeAllDecals() {
+    decalMeshes.forEach(disposeDecalMesh);
+    decalMeshes = [];
+    decalItems.value = [];
+    selectedDecalId.value = '';
+  }
 
-// ── UV helper functions (unchanged logic) ──────────────────
+  return {
+    loading,
+    decalItems,
+    selectedDecalId,
+    updateTexture,
+    setUVTemplateListener,
+    start,
+    raycastUV,
+    setOrbitEnabled,
+    getRendererDom,
+    setEditorMode,
+    setBaseColor,
+    addDecalAtClient,
+    selectDecalAt,
+    selectDecalById,
+    clearSelectedDecal,
+    moveSelectedDecalTo,
+    removeDecalById,
+    removeSelectedDecal,
+    getDecalState,
+  };
+}
 
 function getMeshUVAttribute(mesh) {
   if (!mesh.geometry?.attributes) return null;
@@ -250,7 +537,10 @@ function getMeshUVAttribute(mesh) {
 }
 
 function analyzeUVBounds(meshes, canvasSize = 1024, paddingRatio = 0.06) {
-  let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+  let minU = Infinity;
+  let maxU = -Infinity;
+  let minV = Infinity;
+  let maxV = -Infinity;
   let validMeshCount = 0;
 
   meshes.forEach((mesh) => {
@@ -258,7 +548,8 @@ function analyzeUVBounds(meshes, canvasSize = 1024, paddingRatio = 0.06) {
     if (!uv) return;
     validMeshCount++;
     for (let i = 0; i < uv.count; i++) {
-      const u = uv.getX(i), v = uv.getY(i);
+      const u = uv.getX(i);
+      const v = uv.getY(i);
       if (u < minU) minU = u;
       if (u > maxU) maxU = u;
       if (v < minV) minV = v;
@@ -286,7 +577,11 @@ function computeUvCanvasLayout(bounds, canvasSize, paddingRatio) {
   const offsetY = (canvasSize - contentHeight) * 0.5;
 
   return {
-    pixelScale, contentWidth, contentHeight, offsetX, offsetY,
+    pixelScale,
+    contentWidth,
+    contentHeight,
+    offsetX,
+    offsetY,
     textureScale: pixelScale / canvasSize,
     textureOffsetX: offsetX / canvasSize - bounds.minU * (pixelScale / canvasSize),
     textureOffsetY: offsetY / canvasSize - bounds.minV * (pixelScale / canvasSize),
@@ -307,22 +602,26 @@ function createCombinedUVCanvas(meshes, size, paddingRatio, uvConfig) {
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, size, size);
 
-  // Grid
   ctx.save();
   ctx.strokeStyle = 'rgba(148,163,184,0.2)';
   ctx.lineWidth = 1;
   for (let step = 0; step <= 8; step++) {
     const ox = bounds.offsetX + (bounds.contentWidth / 8) * step;
     const oy = bounds.offsetY + (bounds.contentHeight / 8) * step;
-    ctx.beginPath(); ctx.moveTo(ox, bounds.offsetY); ctx.lineTo(ox, bounds.offsetY + bounds.contentHeight); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(bounds.offsetX, oy); ctx.lineTo(bounds.offsetX + bounds.contentWidth, oy); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(ox, bounds.offsetY);
+    ctx.lineTo(ox, bounds.offsetY + bounds.contentHeight);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(bounds.offsetX, oy);
+    ctx.lineTo(bounds.offsetX + bounds.contentWidth, oy);
+    ctx.stroke();
   }
   ctx.strokeStyle = 'rgba(71,85,105,0.35)';
   ctx.lineWidth = 2;
   ctx.strokeRect(bounds.offsetX, bounds.offsetY, bounds.contentWidth, bounds.contentHeight);
   ctx.restore();
 
-  // Mesh outlines
   meshes.forEach((mesh, index) => {
     const uv = getMeshUVAttribute(mesh);
     if (!uv) return;
@@ -331,16 +630,24 @@ function createCombinedUVCanvas(meshes, size, paddingRatio, uvConfig) {
     if (triangles.length === 0) return;
 
     ctx.fillStyle = `hsla(${hue},85%,72%,0.18)`;
-    triangles.forEach((t) => {
+    triangles.forEach((triangle) => {
       ctx.beginPath();
-      ctx.moveTo(t[0].x, t[0].y); ctx.lineTo(t[1].x, t[1].y); ctx.lineTo(t[2].x, t[2].y);
-      ctx.closePath(); ctx.fill();
+      ctx.moveTo(triangle[0].x, triangle[0].y);
+      ctx.lineTo(triangle[1].x, triangle[1].y);
+      ctx.lineTo(triangle[2].x, triangle[2].y);
+      ctx.closePath();
+      ctx.fill();
     });
 
     ctx.strokeStyle = `hsla(${hue},70%,42%,0.95)`;
     ctx.lineWidth = 2;
     const boundary = extractBoundary(triangles);
-    boundary.forEach(([a, b]) => { ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); });
+    boundary.forEach(([a, b]) => {
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    });
   });
 
   return canvas;
@@ -352,7 +659,12 @@ function collectTriangles(mesh, uv, mapX, mapY) {
   const triangles = [];
   for (let i = 0; i < count; i += 3) {
     const abc = idx ? [idx.getX(i), idx.getX(i + 1), idx.getX(i + 2)] : [i, i + 1, i + 2];
-    triangles.push(abc.map((vi) => ({ u: uv.getX(vi), v: uv.getY(vi), x: mapX(uv.getX(vi)), y: mapY(uv.getY(vi)) })));
+    triangles.push(abc.map((vi) => ({
+      u: uv.getX(vi),
+      v: uv.getY(vi),
+      x: mapX(uv.getX(vi)),
+      y: mapY(uv.getY(vi)),
+    })));
   }
   return triangles;
 }
@@ -364,9 +676,53 @@ function extractBoundary(triangles) {
       const ka = `${a.u.toFixed(5)},${a.v.toFixed(5)}`;
       const kb = `${b.u.toFixed(5)},${b.v.toFixed(5)}`;
       const key = ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`;
-      const c = map.get(key);
-      if (c) c.count++; else map.set(key, { a, b, count: 1 });
+      const current = map.get(key);
+      if (current) current.count++;
+      else map.set(key, { a, b, count: 1 });
     });
   });
-  return Array.from(map.values()).filter((e) => e.count === 1).map((e) => [e.a, e.b]);
+  return Array.from(map.values()).filter((entry) => entry.count === 1).map((entry) => [entry.a, entry.b]);
+}
+
+function getWorldNormal(hit) {
+  const normal = hit.face?.normal?.clone() || new THREE.Vector3(0, 0, 1);
+  const normalMatrix = new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld);
+  normal.applyMatrix3(normalMatrix).normalize();
+  return normal;
+}
+
+function disposeDecalMesh(mesh) {
+  mesh.geometry?.dispose();
+  if (mesh.material?.map) mesh.material.map.dispose();
+  mesh.material?.dispose?.();
+  mesh.parent?.remove(mesh);
+}
+
+function loadDecalAsset(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      const texture = new THREE.Texture(image);
+      texture.needsUpdate = true;
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.wrapS = THREE.ClampToEdgeWrapping;
+      texture.wrapT = THREE.ClampToEdgeWrapping;
+      resolve({ texture, aspect: image.width / image.height || 1 });
+    };
+    image.onerror = reject;
+    image.src = dataUrl;
+  });
+}
+
+function getDefaultDecalLabel(type, id) {
+  const index = id.split('-').pop();
+  const map = {
+    image: '图片贴花',
+    text: '文字贴花',
+    rect: '矩形贴花',
+    circle: '圆形贴花',
+    triangle: '三角贴花',
+    line: '线条贴花',
+  };
+  return `${map[type] || '3D 贴花'} ${index}`;
 }

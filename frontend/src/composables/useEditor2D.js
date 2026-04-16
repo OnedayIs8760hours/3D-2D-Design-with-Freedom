@@ -1,4 +1,4 @@
-import { onMounted, onBeforeUnmount, shallowRef } from 'vue';
+import { onMounted, onBeforeUnmount, ref, shallowRef } from 'vue';
 import { fabric } from 'fabric';
 
 /**
@@ -7,9 +7,12 @@ import { fabric } from 'fabric';
  */
 export function useEditor2D(canvasId) {
   const canvas = shallowRef(null);
+  const layerItems = ref([]);
+  const selectedObjectId = ref('');
   let uvBackgroundImage = null;
   let onUpdate = null;
   let cleanupPanZoom = null;
+  let nextObjectId = 1;
 
   function init() {
     const c = new fabric.Canvas(canvasId, {
@@ -24,8 +27,17 @@ export function useEditor2D(canvasId) {
       if (onUpdate) onUpdate();
     });
 
+    c.on('object:added', refreshLayers);
+    c.on('object:removed', refreshLayers);
+    c.on('object:modified', refreshLayers);
+    c.on('selection:created', syncSelectionFromCanvas);
+    c.on('selection:updated', syncSelectionFromCanvas);
+    c.on('selection:cleared', clearSelection);
+
     canvas.value = c;
     cleanupPanZoom = initPanZoom(c);
+    window.addEventListener('keydown', onDeleteKeyDown);
+    refreshLayers();
   }
 
   // ── Pan / Zoom ──────────────────────────────────
@@ -154,6 +166,7 @@ export function useEditor2D(canvasId) {
         c.add(img);
         c.sendToBack(img);
         c.requestRenderAll();
+        refreshLayers();
       },
       { crossOrigin: 'anonymous' },
     );
@@ -162,36 +175,52 @@ export function useEditor2D(canvasId) {
   function addText() {
     const c = canvas.value;
     const text = new fabric.Text('Design', { left: 300, top: 300, fontSize: 60, fill: '#333' });
+    decorateObject(text, 'text', '文字');
     c.add(text);
     c.setActiveObject(text);
   }
 
   function addRect() {
     const c = canvas.value;
-    c.add(new fabric.Rect({ left: 200, top: 200, fill: 'orange', width: 100, height: 100 }));
+    const rect = new fabric.Rect({ left: 200, top: 200, fill: 'orange', width: 100, height: 100 });
+    decorateObject(rect, 'rect', '矩形');
+    c.add(rect);
+    c.setActiveObject(rect);
   }
 
   function addCircle() {
     const c = canvas.value;
-    c.add(new fabric.Circle({ left: 250, top: 250, radius: 50, fill: '#3498db' }));
+    const circle = new fabric.Circle({ left: 250, top: 250, radius: 50, fill: '#3498db' });
+    decorateObject(circle, 'circle', '圆形');
+    c.add(circle);
+    c.setActiveObject(circle);
   }
 
   function addTriangle() {
     const c = canvas.value;
-    c.add(new fabric.Triangle({ left: 300, top: 200, width: 100, height: 100, fill: '#2ecc71' }));
+    const triangle = new fabric.Triangle({ left: 300, top: 200, width: 100, height: 100, fill: '#2ecc71' });
+    decorateObject(triangle, 'triangle', '三角形');
+    c.add(triangle);
+    c.setActiveObject(triangle);
   }
 
   function addLine() {
     const c = canvas.value;
-    c.add(new fabric.Line([200, 300, 400, 300], { stroke: '#333', strokeWidth: 3 }));
+    const line = new fabric.Line([200, 300, 400, 300], { stroke: '#333', strokeWidth: 3 });
+    decorateObject(line, 'line', '线条');
+    c.add(line);
+    c.setActiveObject(line);
   }
 
   function addImage(dataUrl) {
     const c = canvas.value;
     fabric.Image.fromURL(dataUrl, (img) => {
       img.scaleToWidth(200);
+      decorateObject(img, 'image', '图片');
       c.add(img);
       c.centerObject(img);
+      c.setActiveObject(img);
+      c.requestRenderAll();
     });
   }
 
@@ -199,6 +228,7 @@ export function useEditor2D(canvasId) {
     const c = canvas.value;
     fabric.Image.fromURL(dataUrl, (img) => {
       img.scaleToWidth(200);
+      decorateObject(img, 'image', '图片');
       img.set({
         left: x - img.getScaledWidth() / 2,
         top: y - img.getScaledHeight() / 2,
@@ -238,6 +268,35 @@ export function useEditor2D(canvasId) {
     c.requestRenderAll();
   }
 
+  function selectObjectById(id) {
+    const c = canvas.value;
+    if (!c) return;
+    const target = c.getObjects().find((obj) => obj.customId === id);
+    if (!target) return;
+    c.setActiveObject(target);
+    target.setCoords();
+    c.requestRenderAll();
+    syncSelectionFromCanvas();
+  }
+
+  function removeObjectById(id) {
+    const c = canvas.value;
+    if (!c) return;
+    const target = c.getObjects().find((obj) => obj.customId === id);
+    if (!target || target === uvBackgroundImage) return;
+    c.remove(target);
+    c.discardActiveObject();
+    c.requestRenderAll();
+    refreshLayers();
+  }
+
+  function removeActiveObject() {
+    const active = canvas.value?.getActiveObject();
+    if (!active || active === uvBackgroundImage) return false;
+    removeObjectById(active.customId);
+    return true;
+  }
+
   function getElement() {
     return canvas.value?.getElement() ?? null;
   }
@@ -247,16 +306,94 @@ export function useEditor2D(canvasId) {
   }
 
   function getCanvasJSON() {
-    return canvas.value?.toJSON() ?? null;
+    return canvas.value?.toJSON(['customId', 'customType', 'displayName']) ?? null;
   }
 
   function loadCanvasJSON(json) {
-    canvas.value?.loadFromJSON(json, () => canvas.value.requestRenderAll());
+    canvas.value?.loadFromJSON(json, () => {
+      ensureObjectMetadata();
+      refreshLayers();
+      canvas.value.requestRenderAll();
+    });
+  }
+
+  function decorateObject(obj, type, label) {
+    obj.customId = `layer-${nextObjectId++}`;
+    obj.customType = type;
+    obj.displayName = `${label} ${nextObjectId - 1}`;
+    return obj;
+  }
+
+  function ensureObjectMetadata() {
+    const c = canvas.value;
+    if (!c) return;
+
+    c.getObjects().forEach((obj) => {
+      if (obj === uvBackgroundImage || obj.selectable === false) return;
+      if (!obj.customId) obj.customId = `layer-${nextObjectId++}`;
+      if (!obj.customType) obj.customType = inferObjectType(obj);
+      if (!obj.displayName) obj.displayName = `${getTypeLabel(obj.customType)} ${nextObjectId - 1}`;
+    });
+  }
+
+  function refreshLayers() {
+    const c = canvas.value;
+    if (!c) return;
+
+    ensureObjectMetadata();
+    layerItems.value = c
+      .getObjects()
+      .filter((obj) => obj !== uvBackgroundImage && obj.selectable !== false)
+      .map((obj) => ({
+        id: obj.customId,
+        type: obj.customType,
+        name: obj.displayName,
+      }))
+      .reverse();
+
+    syncSelectionFromCanvas();
+  }
+
+  function syncSelectionFromCanvas() {
+    const active = canvas.value?.getActiveObject();
+    selectedObjectId.value = active?.customId || '';
+  }
+
+  function clearSelection() {
+    selectedObjectId.value = '';
+  }
+
+  function onDeleteKeyDown(event) {
+    if (event.key !== 'Delete' && event.key !== 'Backspace') return;
+    const target = event.target;
+    const tagName = target?.tagName?.toLowerCase();
+    if (tagName === 'input' || tagName === 'textarea' || target?.isContentEditable) return;
+    if (removeActiveObject()) event.preventDefault();
+  }
+
+  function inferObjectType(obj) {
+    if (obj.type === 'image') return 'image';
+    if (obj.type === 'text' || obj.type === 'i-text' || obj.type === 'textbox') return 'text';
+    return obj.type || 'shape';
+  }
+
+  function getTypeLabel(type) {
+    const map = {
+      image: '图片',
+      text: '文字',
+      rect: '矩形',
+      circle: '圆形',
+      triangle: '三角形',
+      line: '线条',
+      shape: '图形',
+    };
+    return map[type] || '素材';
   }
 
   // ── Lifecycle ───────────────────────────────────
   onMounted(() => init());
   onBeforeUnmount(() => {
+    window.removeEventListener('keydown', onDeleteKeyDown);
     if (cleanupPanZoom) cleanupPanZoom();
     canvas.value?.dispose();
   });
@@ -276,6 +413,11 @@ export function useEditor2D(canvasId) {
     setOnUpdate,
     getCanvasJSON,
     loadCanvasJSON,
+    layerItems,
+    selectedObjectId,
+    selectObjectById,
+    removeObjectById,
+    removeActiveObject,
     getObjectAtPoint,
     moveObjectBy,
   };

@@ -5,7 +5,7 @@ import { ref, watch, onBeforeUnmount } from 'vue';
  * - Edit mode: click/drag on 3D surface to select/move Fabric.js objects
  * - File drop: drag image files onto the 3D model to place them at UV position
  */
-export function use3DInteraction() {
+export function use3DInteraction(modeRef) {
   const editMode = ref(false);
   let viewer = null;
   let editor = null;
@@ -43,8 +43,17 @@ export function use3DInteraction() {
     if (containerEl) containerEl.style.cursor = val ? 'crosshair' : '';
   });
 
+  watch(
+    () => modeRef?.value,
+    (mode) => {
+      if (mode !== 'uv2d') {
+        editMode.value = false;
+      }
+    },
+  );
+
   function onMouseDown(e) {
-    if (!editMode.value || !viewer) return;
+    if (modeRef?.value !== 'uv2d' || !editMode.value || !viewer) return;
 
     const hit = viewer.raycastUV(e.clientX, e.clientY);
     if (!hit) return;
@@ -61,7 +70,7 @@ export function use3DInteraction() {
   }
 
   function onMouseMove(e) {
-    if (!isDragging || !dragTarget || !viewer) return;
+    if (modeRef?.value !== 'uv2d' || !isDragging || !dragTarget || !viewer) return;
 
     const hit = viewer.raycastUV(e.clientX, e.clientY);
     if (!hit) return;
