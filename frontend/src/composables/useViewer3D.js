@@ -32,6 +32,7 @@ export function useViewer3D(containerId, options = {}) {
   let editorMode = 'uv2d';
   let baseColor = '#ffffff';
   let decalCounter = 1;
+  let onDecalChange = null;
 
   const raycaster = new THREE.Raycaster();
   const mouseVec = new THREE.Vector2();
@@ -359,6 +360,7 @@ export function useViewer3D(containerId, options = {}) {
     decalMeshes.push(decalMesh);
     refreshDecalItems();
     selectDecalById(id);
+    notifyDecalChange();
     return decalMesh;
   }
 
@@ -390,6 +392,8 @@ export function useViewer3D(containerId, options = {}) {
       point: hit.point.clone(),
       normal: hit.normal.clone(),
       targetUuid: hit.object.uuid,
+      canvasX: hit.canvasX ?? 0,
+      canvasY: hit.canvasY ?? 0,
     };
     return mesh;
   }
@@ -439,6 +443,9 @@ export function useViewer3D(containerId, options = {}) {
     mesh.userData.point = hit.point.clone();
     mesh.userData.normal = hit.normal.clone();
     mesh.userData.targetUuid = hit.object.uuid;
+    mesh.userData.canvasX = hit.canvasX ?? mesh.userData.canvasX;
+    mesh.userData.canvasY = hit.canvasY ?? mesh.userData.canvasY;
+    notifyDecalChange();
     return mesh;
   }
 
@@ -452,6 +459,7 @@ export function useViewer3D(containerId, options = {}) {
     }
     refreshDecalItems();
     syncDecalHighlight();
+    notifyDecalChange();
   }
 
   function removeSelectedDecal() {
@@ -501,6 +509,25 @@ export function useViewer3D(containerId, options = {}) {
     return renderer.value?.domElement ?? null;
   }
 
+  function setDecalChangeCallback(fn) {
+    onDecalChange = fn;
+  }
+
+  function notifyDecalChange() {
+    if (!onDecalChange) return;
+    const data = decalMeshes.map((m) => ({
+      id: m.userData.id,
+      type: m.userData.type,
+      name: m.userData.name,
+      dataUrl: m.userData.dataUrl,
+      canvasX: m.userData.canvasX,
+      canvasY: m.userData.canvasY,
+      scale: m.userData.scale,
+      aspect: m.userData.aspect,
+    }));
+    onDecalChange(data);
+  }
+
   function disposeAllDecals() {
     decalMeshes.forEach(disposeDecalMesh);
     decalMeshes = [];
@@ -528,6 +555,7 @@ export function useViewer3D(containerId, options = {}) {
     removeDecalById,
     removeSelectedDecal,
     getDecalState,
+    setDecalChangeCallback,
   };
 }
 

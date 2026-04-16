@@ -37,6 +37,7 @@ const {
   removeDecalById,
   removeSelectedDecal,
   getDecalState,
+  setDecalChangeCallback,
 } = useViewer3D('viewer-container', {
   modelUrl: props.modelUrl,
   uvGuideUrl: props.uvGuideUrl,
@@ -62,5 +63,6 @@ defineExpose({
   removeDecalById,
   removeSelectedDecal,
   getDecalState,
+  setDecalChangeCallback,
 });
 </script>

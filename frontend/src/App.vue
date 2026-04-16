@@ -43,22 +43,15 @@
       />
 
       <div ref="workspaceRef" class="workspace-split" :class="{ resizing: isResizing }">
-        <!-- Center: 2D design canvas -->
-        <div class="design-area" :class="{ 'mode-3d': editorMode === '3d' }">
-          <div v-if="editorMode === 'uv2d'" class="design-canvas-zone">
+        <!-- Center: 2D design canvas (always visible, 3D mode shows synced overlays) -->
+        <div class="design-area">
+          <div class="design-canvas-zone">
             <div id="canvas-wrapper">
               <canvas id="texture-canvas"></canvas>
             </div>
+            <span v-if="editorMode === '3d'" class="canvas-mode-badge">3D 同步预览</span>
           </div>
-          <div v-else class="mode-empty-state">
-            <div class="mode-empty-card">
-              <span class="mode-empty-badge">3D 驱动模式</span>
-              <h3>当前不使用 UV / 2D 画布</h3>
-              <p>素材会作为独立 3D 贴花直接放到模型表面，和左侧 2D 方案完全隔离。</p>
-              <p>先在“上传 / 文字 / 图形”里创建贴花，再点击右侧 3D 模型放置。</p>
-            </div>
-          </div>
-          <p class="canvas-hint">{{ editorMode === 'uv2d' ? '一体化板片 · 滚轮缩放 · 空格+拖拽平移 · 实际导出 1024×1024' : '3D 贴花独立编辑 · 与 UV / 2D 状态完全隔离' }}</p>
+          <p class="canvas-hint">{{ editorMode === 'uv2d' ? '一体化板片 · 滚轮缩放 · 空格+拖拽平移 · 实际导出 1024×1024' : '3D 贴花同步预览 · 素材位置自动映射到板片' }}</p>
         </div>
 
         <div
@@ -172,6 +165,11 @@ onMounted(async () => {
   interaction.init(viewer, editor);
   decalInteraction.init(viewer);
   viewer.setEditorMode(editorMode.value);
+  viewer.setDecalChangeCallback((decals) => {
+    if (editorMode.value === '3d') {
+      editor.syncDecalOverlays(decals);
+    }
+  });
   viewer.start();
 });
 
@@ -220,6 +218,9 @@ function onSwitchEditorMode(mode) {
   interaction.editMode.value = false;
   decalInteraction.editMode.value = false;
   viewerRef.value?.setEditorMode(mode);
+  if (mode !== '3d') {
+    editor.clearDecalOverlays();
+  }
 }
 
 function onSelectLayer(id) {

@@ -371,6 +371,59 @@ export function useEditor2D(canvasId) {
     if (removeActiveObject()) event.preventDefault();
   }
 
+  /**
+   * Sync 3D decal overlays onto the 2D canvas (read-only visual indicators).
+   * Called when decals change in 3D mode so the user can see the flat UV mapping.
+   * @param {Array} decals - [{id, dataUrl, canvasX, canvasY, scale, aspect}]
+   */
+  function syncDecalOverlays(decals) {
+    const c = canvas.value;
+    if (!c) return;
+
+    // Remove existing synced overlays
+    const existing = c.getObjects().filter((o) => o._syncedDecal);
+    existing.forEach((o) => c.remove(o));
+
+    if (!decals || !decals.length) {
+      c.requestRenderAll();
+      return;
+    }
+
+    decals.forEach((d) => {
+      fabric.Image.fromURL(
+        d.dataUrl,
+        (img) => {
+          if (!img || !img.width) return;
+          // Scale the decal image to a reasonable size on the 1024 canvas
+          const displayWidth = (d.scale || 4.8) * 28;
+          const scaleRatio = displayWidth / img.width;
+          img.set({
+            left: d.canvasX - (img.width * scaleRatio) / 2,
+            top: d.canvasY - (img.height * scaleRatio) / 2,
+            scaleX: scaleRatio,
+            scaleY: scaleRatio,
+            selectable: false,
+            evented: false,
+            opacity: 0.75,
+            _syncedDecal: true,
+            _syncedDecalId: d.id,
+          });
+          c.add(img);
+          c.requestRenderAll();
+        },
+        { crossOrigin: 'anonymous' },
+      );
+    });
+  }
+
+  function clearDecalOverlays() {
+    const c = canvas.value;
+    if (!c) return;
+    const existing = c.getObjects().filter((o) => o._syncedDecal);
+    existing.forEach((o) => c.remove(o));
+    c.requestRenderAll();
+  }
+
   function inferObjectType(obj) {
     if (obj.type === 'image') return 'image';
     if (obj.type === 'text' || obj.type === 'i-text' || obj.type === 'textbox') return 'text';
@@ -420,5 +473,7 @@ export function useEditor2D(canvasId) {
     removeActiveObject,
     getObjectAtPoint,
     moveObjectBy,
+    syncDecalOverlays,
+    clearDecalOverlays,
   };
 }
