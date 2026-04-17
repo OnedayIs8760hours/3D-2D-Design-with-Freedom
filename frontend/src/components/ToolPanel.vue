@@ -122,23 +122,42 @@
   </transition>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed } from 'vue';
 
-const props = defineProps({
-  activePanel: { type: String, default: '' },
-  layerItems: { type: Array, default: () => [] },
-  selectedObjectId: { type: String, default: '' },
-  editorMode: { type: String, default: 'uv2d' },
-  pending3DAssetLabel: { type: String, default: '' },
-});
+interface LayerItem {
+  id: string;
+  type: string;
+  name: string;
+}
 
-const emit = defineEmits([
-  'close', 'add-text', 'add-rect', 'add-circle', 'add-triangle', 'add-line',
-  'add-image', 'set-background', 'upload-model', 'save-design',
-  'select-layer', 'remove-layer', 'remove-active-layer',
-  'prepare-3d-text', 'prepare-3d-shape', 'prepare-3d-image', 'set-3d-base-color',
-]);
+const props = defineProps<{
+  activePanel: string;
+  layerItems: LayerItem[];
+  selectedObjectId: string;
+  editorMode: string;
+  pending3DAssetLabel: string;
+}>();
+
+const emit = defineEmits<{
+  close: [];
+  'add-text': [];
+  'add-rect': [];
+  'add-circle': [];
+  'add-triangle': [];
+  'add-line': [];
+  'add-image': [dataUrl: string];
+  'set-background': [color: string];
+  'upload-model': [file: File];
+  'save-design': [];
+  'select-layer': [id: string];
+  'remove-layer': [id: string];
+  'remove-active-layer': [];
+  'prepare-3d-text': [text: string];
+  'prepare-3d-shape': [shape: string];
+  'prepare-3d-image': [asset: { dataUrl: string; type: string; label: string }];
+  'set-3d-base-color': [color: string];
+}>();
 
 const bgColor = ref('#ffffff');
 
@@ -149,37 +168,48 @@ const presetColors = [
 ];
 
 const panelTitle = computed(() => {
-  const map = { uploads: '上传', text: '文字', shapes: '图形', fill: '填充', layers: '图层' };
+  const map: Record<string, string> = { uploads: '上传', text: '文字', shapes: '图形', fill: '填充', layers: '图层' };
   return map[props.activePanel] || '';
 });
 
-function onFileChange(e) {
-  const files = e.target.files;
-  if (!files.length) return;
-  Array.from(files).forEach((file) => {
+function onFileChange(e: Event): void {
+  const input = e.target as HTMLInputElement;
+  const files = input.files;
+  if (!files || !files.length) return;
+  Array.from(files).forEach((file: File) => {
     const reader = new FileReader();
-    reader.onload = (ev) => {
+    reader.onload = (ev: ProgressEvent<FileReader>) => {
+      const result = ev.target!.result as string;
       if (props.editorMode === '3d') {
-        emit('add-3d-image', { dataUrl: ev.target.result, label: file.name.replace(/\.[^.]+$/, '') || '图片贴花' });
+        emit('prepare-3d-image', { dataUrl: result, type: 'image', label: file.name.replace(/\.[^.]+$/, '') || '图片贴花' });
       } else {
-        emit('add-image', ev.target.result);
+        emit('add-image', result);
       }
     };
     reader.readAsDataURL(file);
   });
 }
 
-function onColorChange(e) {
-  bgColor.value = e.target.value;
-  emit(props.editorMode === '3d' ? 'set-3d-base-color' : 'set-background', e.target.value);
+function onColorChange(e: Event): void {
+  const value = (e.target as HTMLInputElement).value;
+  bgColor.value = value;
+  if (props.editorMode === '3d') {
+    emit('set-3d-base-color', value);
+  } else {
+    emit('set-background', value);
+  }
 }
 
-function onPresetColor(c) {
+function onPresetColor(c: string): void {
   bgColor.value = c;
-  emit(props.editorMode === '3d' ? 'set-3d-base-color' : 'set-background', c);
+  if (props.editorMode === '3d') {
+    emit('set-3d-base-color', c);
+  } else {
+    emit('set-background', c);
+  }
 }
 
-function emitTextPreset(kind) {
+function emitTextPreset(kind: string): void {
   if (props.editorMode === '3d') {
     emit('prepare-3d-text', kind === '标题' ? '3D Title' : '3D Text');
     return;
@@ -187,28 +217,27 @@ function emitTextPreset(kind) {
   emit('add-text');
 }
 
-function emitShapePreset(shape) {
+function emitShapePreset(shape: string): void {
   if (props.editorMode === '3d') {
     emit('prepare-3d-shape', shape);
     return;
   }
 
-  const map = {
-    rect: 'add-rect',
-    circle: 'add-circle',
-    triangle: 'add-triangle',
-    line: 'add-line',
-  };
-  emit(map[shape]);
+  switch (shape) {
+    case 'rect': emit('add-rect'); break;
+    case 'circle': emit('add-circle'); break;
+    case 'triangle': emit('add-triangle'); break;
+    case 'line': emit('add-line'); break;
+  }
 }
 
-function onModelUpload(e) {
-  const file = e.target.files[0];
+function onModelUpload(e: Event): void {
+  const file = (e.target as HTMLInputElement).files?.[0];
   if (file) emit('upload-model', file);
 }
 
-function getTypeLabel(type) {
-  const map = {
+function getTypeLabel(type: string): string {
+  const map: Record<string, string> = {
     image: '图片素材',
     text: '文字素材',
     rect: '矩形',
@@ -220,8 +249,8 @@ function getTypeLabel(type) {
   return map[type] || '素材';
 }
 
-function getTypeIcon(type) {
-  const map = {
+function getTypeIcon(type: string): string {
+  const map: Record<string, string> = {
     image: '🖼',
     text: '𝐓',
     rect: '▭',

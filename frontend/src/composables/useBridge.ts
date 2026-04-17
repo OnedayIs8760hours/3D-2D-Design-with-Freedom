@@ -2,14 +2,24 @@
  * Composable that bridges the 2D editor and 3D viewer.
  * Listens to editor canvas changes and pushes them to the 3D texture.
  */
-export function useBridge(editor, viewer) {
+
+interface EditorInstance {
+  setOnUpdate: (fn: () => void) => void;
+  getElement: () => HTMLCanvasElement | null;
+}
+
+interface ViewerInstance {
+  updateTexture: (el: HTMLCanvasElement) => void;
+}
+
+export function useBridge(editor: EditorInstance, viewer: ViewerInstance): void {
   let isUpdatePending = false;
 
   editor.setOnUpdate(() => {
     if (!isUpdatePending) {
       isUpdatePending = true;
       requestAnimationFrame(() => {
-        viewer.updateTexture(editor.getElement());
+        viewer.updateTexture(editor.getElement()!);
         isUpdatePending = false;
       });
     }

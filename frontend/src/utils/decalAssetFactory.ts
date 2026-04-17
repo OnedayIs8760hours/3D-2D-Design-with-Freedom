@@ -1,13 +1,33 @@
-function createCanvas(size = 512) {
+interface TextDecalOptions {
+  size?: number;
+  fontSize?: number;
+  fill?: string;
+  stroke?: string;
+}
+
+interface ShapeDecalOptions {
+  size?: number;
+  fill?: string;
+  stroke?: string;
+  lineWidth?: number;
+}
+
+export interface DecalAsset {
+  type: string;
+  label: string;
+  dataUrl: string;
+}
+
+function createCanvas(size: number = 512): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
   return canvas;
 }
 
-export function createTextDecalAsset(text = '3D', options = {}) {
+export function createTextDecalAsset(text: string = '3D', options: TextDecalOptions = {}): DecalAsset {
   const canvas = createCanvas(options.size || 512);
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d')!;
   const fontSize = options.fontSize || 136;
   const fill = options.fill || '#111827';
   const stroke = options.stroke || 'rgba(255,255,255,0.95)';
@@ -30,9 +50,9 @@ export function createTextDecalAsset(text = '3D', options = {}) {
   };
 }
 
-export function createShapeDecalAsset(shape = 'rect', options = {}) {
+export function createShapeDecalAsset(shape: string = 'rect', options: ShapeDecalOptions = {}): DecalAsset {
   const canvas = createCanvas(options.size || 512);
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d')!;
   const fill = options.fill || '#2563eb';
   const stroke = options.stroke || 'rgba(255,255,255,0.9)';
   const lineWidth = options.lineWidth || 16;
@@ -77,7 +97,7 @@ export function createShapeDecalAsset(shape = 'rect', options = {}) {
     ctx.stroke();
   }
 
-  const labelMap = {
+  const labelMap: Record<string, string> = {
     rect: '矩形贴花',
     circle: '圆形贴花',
     triangle: '三角贴花',

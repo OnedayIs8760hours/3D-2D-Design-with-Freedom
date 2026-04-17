@@ -94,29 +94,30 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, nextTick, ref } from 'vue';
 import TopBar from './components/TopBar.vue';
 import IconSidebar from './components/IconSidebar.vue';
 import ToolPanel from './components/ToolPanel.vue';
 import ViewerScene from './components/ViewerScene.vue';
-import { useEditor2D } from './composables/useEditor2D.js';
-import { useBridge } from './composables/useBridge.js';
-import { use3DInteraction } from './composables/use3DInteraction.js';
-import { use3DDecalInteraction } from './composables/use3DDecalInteraction.js';
-import { createShapeDecalAsset, createTextDecalAsset } from './utils/decalAssetFactory.js';
-import { uploadModel, saveDesign as apiSaveDesign } from './api/index.js';
+import { useEditor2D } from './composables/useEditor2D';
+import { useBridge } from './composables/useBridge';
+import { use3DInteraction } from './composables/use3DInteraction';
+import { use3DDecalInteraction } from './composables/use3DDecalInteraction';
+import { createShapeDecalAsset, createTextDecalAsset } from './utils/decalAssetFactory';
+import type { DecalAsset } from './utils/decalAssetFactory';
+import { uploadModel, saveDesign as apiSaveDesign } from './api/index';
 
-const viewerRef = ref(null);
+const viewerRef = ref<InstanceType<typeof ViewerScene> | null>(null);
 const modelUrl = ref('/api/models/2.glb');
 const uvGuideUrl = ref('/api/textures/2_diffuse_1001.png');
 const activePanel = ref('');
 const show3D = ref(true);
 const editorMode = ref('uv2d');
-const workspaceRef = ref(null);
+const workspaceRef = ref<HTMLElement | null>(null);
 const viewerWidthPercent = ref(40);
 const isResizing = ref(false);
-const pending3DAsset = ref(null);
+const pending3DAsset = ref<DecalAsset | null>(null);
 
 const editor = useEditor2D('texture-canvas');
 const interaction = use3DInteraction(editorMode);
@@ -134,12 +135,12 @@ const viewerAreaStyle = computed(() => {
 });
 const activeLayerItems = computed(() => (
   editorMode.value === '3d'
-    ? (viewerRef.value?.decalItems?.value ?? [])
+    ? (viewerRef.value?.decalItems ?? [])
     : editor.layerItems.value
 ));
 const activeSelectedObjectId = computed(() => (
   editorMode.value === '3d'
-    ? (viewerRef.value?.selectedDecalId?.value ?? '')
+    ? (viewerRef.value?.selectedDecalId ?? '')
     : editor.selectedObjectId.value
 ));
 const pending3DAssetLabel = computed(() => pending3DAsset.value?.label || '');
@@ -156,7 +157,7 @@ onMounted(async () => {
   if (uvGuideUrl.value) {
     editor.setUVBackground(uvGuideUrl.value);
   } else {
-    viewer.setUVTemplateListener((templateUrl) => {
+    viewer.setUVTemplateListener((templateUrl: string) => {
       editor.setUVBackground(templateUrl);
     });
   }
@@ -165,7 +166,7 @@ onMounted(async () => {
   interaction.init(viewer, editor);
   decalInteraction.init(viewer);
   viewer.setEditorMode(editorMode.value);
-  viewer.setDecalChangeCallback((decals) => {
+  viewer.setDecalChangeCallback((decals: any[]) => {
     if (editorMode.value === '3d') {
       editor.syncDecalOverlays(decals);
     }
@@ -177,18 +178,18 @@ onBeforeUnmount(() => {
   stopResize();
 });
 
-function startResize(event) {
+function startResize(event: PointerEvent) {
   if (!workspaceRef.value) return;
 
   isResizing.value = true;
-  event.currentTarget?.setPointerCapture?.(event.pointerId);
+  (event.currentTarget as Element)?.setPointerCapture?.(event.pointerId);
   document.body.classList.add('app-is-resizing');
   window.addEventListener('pointermove', onResizePointerMove);
   window.addEventListener('pointerup', stopResize);
   window.addEventListener('pointercancel', stopResize);
 }
 
-function onResizePointerMove(event) {
+function onResizePointerMove(event: PointerEvent) {
   if (!isResizing.value || !workspaceRef.value) return;
 
   const rect = workspaceRef.value.getBoundingClientRect();
@@ -208,11 +209,11 @@ function stopResize() {
   window.dispatchEvent(new Event('resize'));
 }
 
-function clamp(value, min, max) {
+function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-function onSwitchEditorMode(mode) {
+function onSwitchEditorMode(mode: string) {
   editorMode.value = mode;
   pending3DAsset.value = null;
   interaction.editMode.value = false;
@@ -223,7 +224,7 @@ function onSwitchEditorMode(mode) {
   }
 }
 
-function onSelectLayer(id) {
+function onSelectLayer(id: string) {
   if (editorMode.value === '3d') {
     viewerRef.value?.selectDecalById(id);
     return;
@@ -231,7 +232,7 @@ function onSelectLayer(id) {
   editor.selectObjectById(id);
 }
 
-function onRemoveLayer(id) {
+function onRemoveLayer(id: string) {
   if (editorMode.value === '3d') {
     viewerRef.value?.removeDecalById(id);
     return;
@@ -255,11 +256,11 @@ function toggleViewerEditMode() {
   interaction.editMode.value = !interaction.editMode.value;
 }
 
-function onSet3DBaseColor(color) {
+function onSet3DBaseColor(color: string) {
   viewerRef.value?.setBaseColor(color);
 }
 
-function onPrepare3DText(text) {
+function onPrepare3DText(text: string) {
   pending3DAsset.value = createTextDecalAsset(text, {
     fill: '#111827',
     stroke: 'rgba(255,255,255,0.92)',
@@ -267,17 +268,17 @@ function onPrepare3DText(text) {
   decalInteraction.editMode.value = true;
 }
 
-function onPrepare3DShape(shape) {
+function onPrepare3DShape(shape: string) {
   pending3DAsset.value = createShapeDecalAsset(shape);
   decalInteraction.editMode.value = true;
 }
 
-function onPrepare3DImage(asset) {
+function onPrepare3DImage(asset: DecalAsset) {
   pending3DAsset.value = asset;
   decalInteraction.editMode.value = true;
 }
 
-async function onUploadModel(file) {
+async function onUploadModel(file: File) {
   try {
     const result = await uploadModel(file);
     modelUrl.value = result.url;

@@ -1,17 +1,35 @@
-import { ref, watch, onBeforeUnmount } from 'vue';
+import { ref, watch, onBeforeUnmount, type Ref } from 'vue';
 
 /**
  * Interaction layer for the isolated 3D-driven decal editor.
  * Assets are placed directly onto the 3D model and managed independently
  * from the UV/2D workflow.
  */
-export function use3DDecalInteraction(modeRef, pendingAssetRef) {
+
+interface PendingAsset {
+  dataUrl: string;
+  type: string;
+  label: string;
+  scale?: number;
+  rotation?: number;
+}
+
+interface ViewerInstance {
+  addDecalAtClient: (dataUrl: string, clientX: number, clientY: number, options: Record<string, any>) => Promise<any>;
+  selectDecalAt: (clientX: number, clientY: number) => any;
+  clearSelectedDecal: () => void;
+  moveSelectedDecalTo: (clientX: number, clientY: number) => any;
+  removeSelectedDecal: () => boolean;
+  setOrbitEnabled: (enabled: boolean) => void;
+}
+
+export function use3DDecalInteraction(modeRef: Ref<string>, pendingAssetRef: Ref<PendingAsset | null>) {
   const editMode = ref(false);
-  let viewer = null;
-  let containerEl = null;
+  let viewer: ViewerInstance | null = null;
+  let containerEl: HTMLElement | null = null;
   let isDragging = false;
 
-  function init(viewerInstance) {
+  function init(viewerInstance: ViewerInstance): void {
     viewer = viewerInstance;
     containerEl = document.getElementById('viewer-container');
     if (!containerEl) return;
@@ -24,7 +42,7 @@ export function use3DDecalInteraction(modeRef, pendingAssetRef) {
     containerEl.addEventListener('drop', onDrop);
   }
 
-  function destroy() {
+  function destroy(): void {
     if (!containerEl) return;
     containerEl.removeEventListener('pointerdown', onPointerDown);
     window.removeEventListener('pointermove', onPointerMove);
@@ -35,8 +53,8 @@ export function use3DDecalInteraction(modeRef, pendingAssetRef) {
   }
 
   watch(
-    () => [modeRef.value, editMode.value, Boolean(pendingAssetRef.value)],
-    ([mode, canEdit, hasPending]) => {
+    () => [modeRef.value, editMode.value, Boolean(pendingAssetRef.value)] as [string, boolean, boolean],
+    ([mode, canEdit, hasPending]: [string, boolean, boolean]) => {
       if (!viewer) return;
       const shouldCaptureSurface = mode === '3d' && (canEdit || hasPending);
       viewer.setOrbitEnabled(!shouldCaptureSurface);
@@ -49,7 +67,7 @@ export function use3DDecalInteraction(modeRef, pendingAssetRef) {
     { immediate: true },
   );
 
-  function onPointerDown(event) {
+  function onPointerDown(event: PointerEvent): void {
     if (modeRef.value !== '3d' || !viewer) return;
 
     if (pendingAssetRef.value) {
@@ -73,13 +91,13 @@ export function use3DDecalInteraction(modeRef, pendingAssetRef) {
     event.stopPropagation();
   }
 
-  function onPointerMove(event) {
+  function onPointerMove(event: PointerEvent): void {
     if (modeRef.value !== '3d' || !editMode.value || !isDragging || !viewer) return;
     viewer.moveSelectedDecalTo(event.clientX, event.clientY);
     event.preventDefault();
   }
 
-  function onPointerUp() {
+  function onPointerUp(): void {
     if (!isDragging) return;
     isDragging = false;
     if (containerEl) {
@@ -87,24 +105,24 @@ export function use3DDecalInteraction(modeRef, pendingAssetRef) {
     }
   }
 
-  function onDragOver(event) {
+  function onDragOver(event: DragEvent): void {
     if (modeRef.value !== '3d') return;
     event.preventDefault();
-    event.dataTransfer.dropEffect = 'copy';
+    event.dataTransfer!.dropEffect = 'copy';
   }
 
-  function onDrop(event) {
+  function onDrop(event: DragEvent): void {
     if (modeRef.value !== '3d' || !viewer) return;
     event.preventDefault();
 
-    const files = event.dataTransfer.files;
+    const files = event.dataTransfer?.files;
     if (!files?.length) return;
 
-    Array.from(files).forEach((file) => {
+    Array.from(files).forEach((file: File) => {
       if (!file.type.startsWith('image/')) return;
       const reader = new FileReader();
-      reader.onload = async (loadEvent) => {
-        await viewer.addDecalAtClient(loadEvent.target.result, event.clientX, event.clientY, {
+      reader.onload = async (loadEvent: ProgressEvent<FileReader>) => {
+        await viewer!.addDecalAtClient(loadEvent.target!.result as string, event.clientX, event.clientY, {
           type: 'image',
           label: file.name.replace(/\.[^.]+$/, '') || '图片贴花',
         });
@@ -113,10 +131,10 @@ export function use3DDecalInteraction(modeRef, pendingAssetRef) {
     });
   }
 
-  function onKeyDown(event) {
+  function onKeyDown(event: KeyboardEvent): void {
     if (modeRef.value !== '3d') return;
     if (event.key !== 'Delete' && event.key !== 'Backspace') return;
-    const target = event.target;
+    const target = event.target as HTMLElement | null;
     const tagName = target?.tagName?.toLowerCase();
     if (tagName === 'input' || tagName === 'textarea' || target?.isContentEditable) return;
     if (viewer?.removeSelectedDecal?.()) {
@@ -124,7 +142,7 @@ export function use3DDecalInteraction(modeRef, pendingAssetRef) {
     }
   }
 
-  async function placePendingAsset(clientX, clientY) {
+  async function placePendingAsset(clientX: number, clientY: number): Promise<void> {
     if (!viewer || !pendingAssetRef.value) return;
 
     const asset = pendingAssetRef.value;

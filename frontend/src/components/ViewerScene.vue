@@ -7,8 +7,8 @@
   </div>
 </template>
 
-<script setup>
-import { useViewer3D } from '../composables/useViewer3D.js';
+<script setup lang="ts">
+import { useViewer3D } from '../composables/useViewer3D';
 
 const props = defineProps({
   modelUrl: { type: String, default: '/api/models/2.glb' },

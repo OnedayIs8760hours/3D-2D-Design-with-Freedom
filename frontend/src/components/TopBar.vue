@@ -45,7 +45,7 @@
   </header>
 </template>
 
-<script setup>
+<script setup lang="ts">
 defineProps({
   productName: { type: String, default: '自定义服装' },
   show3D: { type: Boolean, default: true },
